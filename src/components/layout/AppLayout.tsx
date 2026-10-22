@@ -1,0 +1,29 @@
+import React, { useState } from 'react';
+import { Outlet } from 'react-router-dom';
+import { Sidebar } from './Sidebar';
+import { Navbar } from './Navbar';
+
+export const AppLayout: React.FC = () => {
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  return (
+    <div className="min-h-screen bg-[#F8FAF9] flex">
+      {/* Sidebar (Desktop fixed left, Mobile drawer) */}
+      <Sidebar
+        mobileOpen={mobileMenuOpen}
+        onCloseMobile={() => setMobileMenuOpen(false)}
+      />
+
+      {/* Main Content Area */}
+      <div className="flex-1 flex flex-col min-w-0 lg:pl-64">
+        {/* Top Navbar */}
+        <Navbar onOpenMobileMenu={() => setMobileMenuOpen(true)} />
+
+        {/* Page Content */}
+        <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl w-full mx-auto animate-fadeIn">
+          <Outlet />
+        </main>
+      </div>
+    </div>
+  );
+};
