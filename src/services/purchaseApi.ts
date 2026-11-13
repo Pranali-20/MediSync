@@ -23,6 +23,33 @@ export const purchaseApi = {
     return res.data?.data || res.data;
   },
 
+  importDistributorBill: async (data: {
+    supplierId?: string;
+    invoiceReference?: string;
+    notes?: string;
+    items: Array<{
+      medicineName: string;
+      genericName?: string;
+      category?: string;
+      manufacturer?: string;
+      dosageForm?: string;
+      strength?: string;
+      unit?: string;
+      quantity: number;
+      purchasePrice: number;
+      sellingPrice?: number;
+      batchNumber?: string;
+      expiryDate?: string;
+      manufacturingDate?: string;
+      barcode?: string;
+      minStockAlert?: number;
+      reorderQuantity?: number;
+    }>;
+  }) => {
+    const res = await apiClient.post('/purchases/import-bill', data);
+    return res.data?.data || res.data;
+  },
+
   receiveShipment: async (
     orderId: string,
     data: {

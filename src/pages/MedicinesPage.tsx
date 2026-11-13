@@ -174,7 +174,7 @@ export const MedicinesPage: React.FC = () => {
             <table className="w-full text-left text-xs sm:text-sm">
               <thead className="bg-[#F8FAF9] text-gray-600 font-semibold border-b border-brand-border">
                 <tr>
-                  <th className="px-5 py-3.5">Medicine & Salt</th>
+                  <th className="px-5 py-3.5">Medicine Name</th>
                   <th className="px-5 py-3.5">Category</th>
                   <th className="px-5 py-3.5">Stock</th>
                   <th className="px-5 py-3.5">MRP</th>
@@ -199,15 +199,8 @@ export const MedicinesPage: React.FC = () => {
                           <div className="w-9 h-9 rounded-lg bg-pharmagreen-50 text-pharmagreen-700 flex items-center justify-center font-bold text-sm shrink-0 border border-pharmagreen-100">
                             {med.name.charAt(0)}
                           </div>
-                          <div>
-                            <div className="font-semibold text-gray-900 flex items-center gap-2">
-                              <span>{med.name}</span>
-                              {med.requiresPrescription && <Badge variant="rx" size="sm" />}
-                            </div>
-                            <div className="text-xs text-brand-muted">{med.genericName}</div>
-                            <div className="text-[11px] text-gray-400 mt-0.5">
-                              Mfg: {med.manufacturer} • {med.location}
-                            </div>
+                          <div className="font-semibold text-gray-900 text-sm">
+                            {med.name}
                           </div>
                         </div>
                       </td>

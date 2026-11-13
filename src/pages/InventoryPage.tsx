@@ -280,7 +280,7 @@ export const InventoryPage: React.FC = () => {
                 <table className="w-full text-left text-xs">
                   <thead className="bg-[#F8FAF9] text-brand-muted font-semibold border-b border-brand-border">
                     <tr>
-                      <th className="px-4 py-3">Medicine Master</th>
+                      <th className="px-4 py-3">Medicine Name</th>
                       <th className="px-4 py-3">Category</th>
                       <th className="px-4 py-3">Total Stock</th>
                       <th className="px-4 py-3">Usable Stock</th>
@@ -298,8 +298,7 @@ export const InventoryPage: React.FC = () => {
                       return (
                         <tr key={med._id || med.id} className="hover:bg-slate-50/70">
                           <td className="px-4 py-3">
-                            <div className="font-bold text-gray-900">{med.name}</div>
-                            <div className="text-[11px] text-brand-muted font-mono">{med.genericName} ({med.dosageForm})</div>
+                            <span className="font-bold text-gray-900 text-sm tracking-tight">{med.name}</span>
                           </td>
                           <td className="px-4 py-3 text-gray-700">{med.category}</td>
                           <td className="px-4 py-3 font-mono font-bold text-gray-900">

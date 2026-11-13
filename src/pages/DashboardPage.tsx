@@ -499,7 +499,6 @@ export const DashboardPage: React.FC = () => {
                         <tr key={item._id} className="hover:bg-slate-50/70">
                           <td className="px-3 py-2.5">
                             <div className="font-bold text-gray-900 line-clamp-1">{item.name}</div>
-                            <div className="text-[10px] text-brand-muted font-mono">{item.genericName}</div>
                           </td>
                           <td className="px-3 py-2.5 font-mono font-bold text-gray-900">
                             {item.totalStock} {item.unit || 'units'}

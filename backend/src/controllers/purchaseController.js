@@ -14,6 +14,25 @@ const generateOrderNumber = async (pharmacyId) => {
   return `PO-${year}-${String(count + 1).padStart(4, '0')}`;
 };
 
+// Clean raw medicine name from distributor bills
+const cleanMedicineName = (rawName) => {
+  if (!rawName) return '';
+  let name = String(rawName).trim();
+  // Strip leading numbers e.g. "1.", "02 -", "#3"
+  name = name.replace(/^#?\d+[\.\-\s\)]+/, '').trim();
+  // Strip HSN/SAC codes
+  name = name.replace(/\bHSN[:\s-]*\d+\b/gi, '').trim();
+  // Strip tax or rate tags like "@12%", "GST 12%", "12% GST"
+  name = name.replace(/\b(GST\s*\d+%?|\d+%\s*GST|@\s*\d+%)\b/gi, '').trim();
+  // Strip embedded batch or expiry markers
+  name = name.replace(/\b(B\.?\s*No[:\.]?|BATCH[:\.]?|EXP[:\.]?|MFG[:\.]?)\s*[\w\/-]+/gi, '').trim();
+  // Strip pack indicators like "10x10", "1x10's", "10TAB", "10'S", "10 CAP"
+  name = name.replace(/\b\d+\s*['xX*]\s*\d+('?s)?\b/gi, '').trim();
+  // Remove repeated whitespaces
+  name = name.replace(/\s{2,}/g, ' ').trim();
+  return name;
+};
+
 // @desc    Get all purchase orders
 // @route   GET /api/purchases
 // @access  Private
@@ -164,6 +183,206 @@ const createPurchaseOrder = async (req, res, next) => {
     });
 
     return successResponse(res, order, `Purchase Order ${orderNumber} created successfully.`, 201);
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Import distributor invoice and add items directly to inventory
+// @route   POST /api/purchases/import-bill
+// @access  Private
+const importDistributorBill = async (req, res, next) => {
+  try {
+    const { supplierId, invoiceReference = 'Distributor Invoice', notes = '', items = [] } = req.body;
+
+    if (!items || !Array.isArray(items) || items.length === 0) {
+      return errorResponse(res, 'At least one medicine item is required to import a distributor bill.', 400);
+    }
+
+    const invalidItemIndex = items.findIndex((item) => {
+      const quantity = Number(item?.quantity || item?.qty);
+      const purchasePrice = Number(item?.purchasePrice || item?.unitPrice || item?.price);
+      const expiryDate = item?.expiryDate || item?.expiry;
+      return !String(item?.medicineName || item?.name || '').trim() ||
+        !Number.isFinite(quantity) || quantity <= 0 ||
+        !Number.isFinite(purchasePrice) || purchasePrice <= 0 ||
+        !String(item?.batchNumber || item?.batch || '').trim() ||
+        !expiryDate || Number.isNaN(new Date(expiryDate).getTime());
+    });
+
+    if (invalidItemIndex !== -1) {
+      return errorResponse(
+        res,
+        `Bill item ${invalidItemIndex + 1} is incomplete. Medicine, positive quantity and unit cost, batch number, and valid expiry date are required.`,
+        400
+      );
+    }
+
+    const supplier = supplierId ? await Supplier.findOne({ _id: supplierId, pharmacy: req.pharmacyId }) : null;
+    if (supplierId && !supplier) {
+      return errorResponse(res, 'Supplier not found.', 404);
+    }
+    const addedItems = [];
+    let createdCount = 0;
+    let updatedCount = 0;
+    let totalValue = 0;
+
+    for (const rawItem of items) {
+      const item = rawItem || {};
+      const rawMedName = String(item.medicineName || item.name || '').trim();
+      const medicineName = cleanMedicineName(rawMedName) || rawMedName;
+      const genericName = cleanMedicineName(String(item.genericName || item.name || '').trim()) || medicineName;
+      const qty = Number(item.quantity || item.qty || 0);
+      const purchasePrice = Number(item.purchasePrice || item.unitPrice || item.price || 0);
+      const sellingPrice = Number(item.sellingPrice || item.mrp || 0);
+      const batchNumber = String(item.batchNumber || item.batch).trim();
+
+      let medicine = await Medicine.findOne({
+        pharmacy: req.pharmacyId,
+        $or: [
+          { name: { $regex: `^${medicineName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' } },
+          { genericName: { $regex: `^${genericName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' } },
+        ],
+      });
+
+      if (!medicine) {
+        medicine = await Medicine.create({
+          pharmacy: req.pharmacyId,
+          name: medicineName,
+          genericName: genericName || medicineName,
+          brand: item.brand || '',
+          category: item.category || 'General',
+          manufacturer: item.manufacturer || 'Authorized Supplier',
+          dosageForm: item.dosageForm || 'Tablet',
+          strength: item.strength || '500mg',
+          unit: item.unit || 'Strip',
+          minStockAlert: Number(item.minStockAlert) || 20,
+          reorderQuantity: Number(item.reorderQuantity) || Math.max(50, qty),
+          totalStock: 0,
+          purchasePrice,
+          sellingPrice,
+          location: item.location || 'General Stock',
+          prescriptionRequired: Boolean(item.prescriptionRequired),
+          barcode: item.barcode || '',
+          description: `Imported from distributor invoice ${invoiceReference}`,
+        });
+        createdCount += 1;
+      } else {
+        medicine.purchasePrice = purchasePrice;
+        if (sellingPrice > 0) medicine.sellingPrice = sellingPrice;
+        await medicine.save();
+      }
+
+      const expiryDateValue = item.expiryDate || item.expiry;
+      const manufacturingDateValue = item.manufacturingDate || item.manufacturedOn || new Date().toISOString().slice(0, 10);
+
+      let batch = await Batch.findOne({
+        pharmacy: req.pharmacyId,
+        medicine: medicine._id,
+        batchNumber: batchNumber,
+      });
+
+      const previousStock = medicine.totalStock || 0;
+
+      if (batch) {
+        batch.quantity += qty;
+        batch.initialQuantity = (batch.initialQuantity || 0) + qty;
+        batch.purchasePrice = purchasePrice || batch.purchasePrice || 0;
+        batch.sellingPrice = sellingPrice || batch.sellingPrice || 0;
+        batch.manufacturingDate = manufacturingDateValue ? new Date(manufacturingDateValue) : batch.manufacturingDate;
+        batch.expiryDate = expiryDateValue ? new Date(expiryDateValue) : batch.expiryDate;
+        if (supplier) {
+          batch.supplier = supplier._id;
+          batch.supplierName = supplier.name;
+        }
+        await batch.save();
+        updatedCount += 1;
+      } else {
+        batch = await Batch.create({
+          pharmacy: req.pharmacyId,
+          medicine: medicine._id,
+          batchNumber,
+          quantity: qty,
+          initialQuantity: qty,
+          unit: item.unit || 'Units',
+          purchasePrice,
+          sellingPrice,
+          manufacturingDate: manufacturingDateValue ? new Date(manufacturingDateValue) : new Date(),
+          expiryDate: new Date(expiryDateValue),
+          supplier: supplier ? supplier._id : null,
+          supplierName: supplier ? supplier.name : 'Authorized Distributor',
+          barcode: item.barcode || '',
+          minimumStockLevel: Number(item.minStockAlert) || 10,
+          reorderPoint: Number(item.reorderQuantity) || Math.max(20, qty),
+          reorderQuantity: Number(item.reorderQuantity) || Math.max(50, qty),
+          status: 'Normal',
+        });
+      }
+
+      const updatedMedicine = await inventoryService.recalculateMedicineStock(medicine._id);
+      const receivedValue = Number((qty * purchasePrice).toFixed(2));
+      totalValue += receivedValue;
+
+      await inventoryService.recordTransaction({
+        pharmacyId: req.pharmacyId,
+        medicineId: medicine._id,
+        medicineName: medicine.name,
+        batchId: batch._id,
+        batchNumber: batch.batchNumber,
+        type: 'PURCHASE',
+        quantity: qty,
+        previousStock,
+        newStock: updatedMedicine.totalStock,
+        reason: `Distributor Invoice Import: ${invoiceReference}`,
+        reference: invoiceReference,
+        createdBy: req.userId,
+      });
+
+      if (supplier) {
+        supplier.priceHistory.push({
+          medicine: medicine._id,
+          medicineName: medicine.name,
+          batchNumber: batch.batchNumber,
+          price: purchasePrice,
+          date: new Date(),
+          invoiceNumber: invoiceReference,
+        });
+        supplier.totalPurchasedAmount = (supplier.totalPurchasedAmount || 0) + receivedValue;
+      }
+
+      addedItems.push({
+        medicineId: medicine._id,
+        medicineName: medicine.name,
+        batchNumber: batch.batchNumber,
+        quantity: qty,
+        purchasePrice,
+        sellingPrice,
+        expiredOn: batch.expiryDate,
+      });
+    }
+
+    if (supplier) {
+      await supplier.save();
+    }
+
+    await auditService.log({
+      pharmacyId: req.pharmacyId,
+      userId: req.userId,
+      userName: req.user.name,
+      userRole: req.user.role,
+      action: 'DISTRIBUTOR_BILL_IMPORTED',
+      entity: 'PurchaseOrder',
+      description: `Imported distributor bill ${invoiceReference} for ${addedItems.length} medicines (₹${totalValue.toFixed(2)})`,
+      newValue: { invoiceReference, items: addedItems },
+    });
+
+    return successResponse(res, {
+      importedCount: addedItems.length,
+      createdCount,
+      updatedCount,
+      totalValue: Number(totalValue.toFixed(2)),
+      items: addedItems,
+    }, `Distributor bill imported successfully. ${addedItems.length} medicines added to inventory.`, 201);
   } catch (error) {
     next(error);
   }
@@ -395,6 +614,7 @@ module.exports = {
   getPurchaseOrders,
   getPurchaseOrderById,
   createPurchaseOrder,
+  importDistributorBill,
   receiveShipment,
   getPriceHistory,
 };

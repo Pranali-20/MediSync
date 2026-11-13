@@ -67,8 +67,8 @@ const createSale = async (req, res, next) => {
       }
 
       const unitPrice = item.unitPrice !== undefined ? Number(item.unitPrice) : batch.sellingPrice;
-      const itemSubtotal = unitPrice * requestedQty;
-      subtotal += itemSubtotal;
+      const itemSubtotal = Number((unitPrice * requestedQty).toFixed(2));
+      subtotal = Number((subtotal + itemSubtotal).toFixed(2));
 
       validatedItems.push({
         medicine: medicine._id,
@@ -86,13 +86,13 @@ const createSale = async (req, res, next) => {
       });
     }
 
-    // Financial calculations
+    // Financial calculations with exact 2-decimal precision
     const discPercent = Number(discountPercent) || 0;
-    const discountAmount = (subtotal * discPercent) / 100;
-    const taxableAmount = subtotal - discountAmount;
+    const discountAmount = Number(((subtotal * discPercent) / 100).toFixed(2));
+    const taxableAmount = Number((subtotal - discountAmount).toFixed(2));
     const taxRate = 12; // 12% GST
-    const taxAmount = (taxableAmount * taxRate) / 100;
-    const totalAmount = taxableAmount + taxAmount;
+    const taxAmount = Number(((taxableAmount * taxRate) / 100).toFixed(2));
+    const totalAmount = Number((taxableAmount + taxAmount).toFixed(2));
 
     const invoiceNumber = await generateInvoiceNumber(req.pharmacyId);
 

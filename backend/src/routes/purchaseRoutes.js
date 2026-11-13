@@ -4,6 +4,7 @@ const {
   getPurchaseOrders,
   getPurchaseOrderById,
   createPurchaseOrder,
+  importDistributorBill,
   receiveShipment,
   getPriceHistory,
 } = require('../controllers/purchaseController');
@@ -15,6 +16,7 @@ router.route('/')
   .get(getPurchaseOrders)
   .post(createPurchaseOrder);
 
+router.post('/import-bill', importDistributorBill);
 router.get('/price-history', getPriceHistory);
 
 router.route('/:id')

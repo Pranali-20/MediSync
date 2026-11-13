@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import * as pdfjsLib from 'pdfjs-dist';
 import {
   ShoppingBag,
   Plus,
@@ -23,10 +24,13 @@ import { purchaseApi } from '../services/purchaseApi';
 import { medicineApi } from '../services/medicineApi';
 import { supplierApi } from '../services/extraApis';
 import { PurchaseOrder, Medicine, Supplier } from '../types';
+import { BillTextLine, DistributorBillItem, parseDistributorBillLines } from '../utils/distributorBillParser';
+
+pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString();
 
 export const PurchasesPage: React.FC = () => {
   const { showToast } = useToast();
-  const [activeTab, setActiveTab] = useState<'orders' | 'create' | 'prices'>('orders');
+  const [activeTab, setActiveTab] = useState<'orders' | 'create' | 'import' | 'prices'>('orders');
   const [orders, setOrders] = useState<PurchaseOrder[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [medicines, setMedicines] = useState<Medicine[]>([]);
@@ -42,6 +46,12 @@ export const PurchasesPage: React.FC = () => {
   const [receivedLots, setReceivedLots] = useState<any[]>([]);
   const [receiveSubmitting, setReceiveSubmitting] = useState(false);
   const [feedbackMsg, setFeedbackMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  // Distributor Bill Import State
+  const [billImportItems, setBillImportItems] = useState<DistributorBillItem[]>([]);
+  const [billImportFileName, setBillImportFileName] = useState('');
+  const [billImportNote, setBillImportNote] = useState('');
+  const [billImportProgress, setBillImportProgress] = useState('');
 
   // New PO State
   const [selectedSupplierId, setSelectedSupplierId] = useState('');
@@ -192,6 +202,168 @@ export const PurchasesPage: React.FC = () => {
     }
   };
 
+  const groupBillSegments = (segments: Array<{ text: string; x: number; y: number }>, tolerance: number): BillTextLine[] => {
+    const sorted = [...segments].sort((a, b) => a.y - b.y || a.x - b.x);
+    const lines: Array<{ y: number; segments: Array<{ text: string; x: number }> }> = [];
+
+    sorted.forEach(({ text, x, y }) => {
+      if (!text.trim()) return;
+      let line = lines.find((candidate) => Math.abs(candidate.y - y) <= tolerance);
+      if (!line) {
+        line = { y, segments: [] };
+        lines.push(line);
+      }
+      line.segments.push({ text: text.trim(), x });
+    });
+
+    return lines
+      .sort((a, b) => a.y - b.y)
+      .map(({ segments: lineSegments }) => ({
+        segments: lineSegments.sort((a, b) => a.x - b.x),
+      }));
+  };
+
+  const extractPdfLines = async (file: File) => {
+    const pdf = await pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
+    const extractedPages: BillTextLine[][] = [];
+    let ocrWorker: Awaited<ReturnType<typeof import('tesseract.js')['createWorker']>> | undefined;
+
+    try {
+      for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+        setBillImportProgress(`Reading PDF page ${pageNumber} of ${pdf.numPages}...`);
+        const page = await pdf.getPage(pageNumber);
+        const textContent = await page.getTextContent();
+        const textSegments = textContent.items.flatMap((item) => {
+          if (!('str' in item) || !item.str.trim()) return [];
+          return [{ text: item.str, x: item.transform[4], y: -item.transform[5] }];
+        });
+
+        const textLines = groupBillSegments(textSegments, 4);
+        if (textSegments.length > 3 && parseDistributorBillLines(textLines).length > 0) {
+          extractedPages.push(textLines);
+          continue;
+        }
+
+        setBillImportProgress(`Scanning image-based PDF page ${pageNumber} of ${pdf.numPages} locally...`);
+        if (!ocrWorker) {
+          const { createWorker } = await import('tesseract.js');
+          ocrWorker = await createWorker('eng', 1, {
+            logger: (message) => {
+              if (message.status === 'recognizing text') {
+                setBillImportProgress(`Recognizing bill text (${Math.round(message.progress * 100)}%)...`);
+              }
+            },
+          });
+        }
+
+        const viewport = page.getViewport({ scale: 2.2 });
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.ceil(viewport.width);
+        canvas.height = Math.ceil(viewport.height);
+        const context = canvas.getContext('2d');
+        if (!context) throw new Error('Unable to prepare PDF page for local text recognition.');
+        await page.render({ canvas, canvasContext: context, viewport }).promise;
+        const { data } = await ocrWorker.recognize(canvas);
+        const words = data.words.map((word) => ({
+          text: word.text,
+          x: word.bbox.x0,
+          y: word.bbox.y0,
+        }));
+        extractedPages.push(groupBillSegments(words, 12));
+        canvas.width = 0;
+        canvas.height = 0;
+      }
+    } finally {
+      await ocrWorker?.terminate();
+    }
+
+    return extractedPages.flat();
+  };
+
+  const handleBillFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const isPdf = file.name.toLowerCase().endsWith('.pdf') || file.type === 'application/pdf';
+    if (!isPdf) {
+      setBillImportItems([]);
+      setBillImportFileName('');
+      setBillImportProgress('');
+      setFeedbackMsg({ type: 'error', text: 'Only PDF distributor bills are supported. Please upload the supplier invoice in PDF format.' });
+      showToast('Invalid file type', 'Only PDF distributor bills are supported.', 'error');
+      event.target.value = '';
+      return;
+    }
+
+    try {
+      setBillImportProgress('Opening PDF...');
+      const lines = await extractPdfLines(file);
+      const parsed = parseDistributorBillLines(lines);
+      if (!parsed.length) {
+        throw new Error('No complete medicine rows could be recognized. This PDF may use a layout that needs manual review, or its scan may be too faint. Try a clearer PDF or enter the missing row details in the review table.');
+      }
+
+      setBillImportItems(parsed);
+      setBillImportFileName(file.name);
+      setFeedbackMsg({ type: 'success', text: `${parsed.length} possible medicine rows detected. Verify the values below before importing.` });
+    } catch (err: any) {
+      setBillImportItems([]);
+      setBillImportFileName('');
+      setFeedbackMsg({ type: 'error', text: err?.message || 'Unable to read selected distributor bill PDF.' });
+      showToast('Bill parse failed', err?.message || 'Unable to read selected distributor bill PDF.', 'error');
+    } finally {
+      setBillImportProgress('');
+      event.target.value = '';
+    }
+  };
+
+  const handleImportDistributorBill = async () => {
+    if (!billImportItems.length) {
+      showToast('No bill items', 'Upload a distributor invoice first to import items.', 'warning');
+      return;
+    }
+    if (billImportItems.some((item) =>
+      !item.medicineName.trim() ||
+      !Number.isFinite(item.quantity) ||
+      item.quantity <= 0 ||
+      !Number.isFinite(item.purchasePrice) ||
+      item.purchasePrice <= 0 ||
+      !item.batchNumber.trim() ||
+      !item.expiryDate
+    )) {
+      showToast('Bill details incomplete', 'Check that every row has a medicine name, valid quantity, unit cost, batch number, and expiry date.', 'warning');
+      return;
+    }
+
+    try {
+      const payload = {
+        supplierId: selectedSupplierId || undefined,
+        invoiceReference: billImportFileName || `DIST-${new Date().toISOString().slice(0, 10)}`,
+        notes: billImportNote || 'Imported from distributor bill',
+        items: billImportItems.map((item) => ({
+          medicineName: item.medicineName,
+          quantity: Number(item.quantity),
+          purchasePrice: Number(item.purchasePrice),
+          sellingPrice: Number(item.sellingPrice || 0),
+          batchNumber: item.batchNumber,
+          expiryDate: item.expiryDate,
+        })),
+      };
+
+      await purchaseApi.importDistributorBill(payload);
+      setFeedbackMsg({ type: 'success', text: `Distributor bill ${billImportFileName || 'import'} processed and stock updated automatically.` });
+      showToast('Inventory Updated', `${billImportItems.length} medicines imported from distributor invoice.`, 'success');
+      setBillImportItems([]);
+      setBillImportFileName('');
+      setBillImportNote('');
+      fetchData();
+    } catch (err: any) {
+      const msg = err?.response?.data?.message || err?.message || 'Failed to import distributor bill.';
+      setFeedbackMsg({ type: 'error', text: msg });
+      showToast('Import failed', msg, 'error');
+    }
+  };
+
   const getStatusBadge = (status: string) => {
     switch (status) {
       case 'RECEIVED':
@@ -219,7 +391,16 @@ export const PurchasesPage: React.FC = () => {
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <Button
+            variant={activeTab === 'import' ? 'secondary' : 'primary'}
+            size="sm"
+            icon={<Receipt className="w-4 h-4" />}
+            onClick={() => setActiveTab(activeTab === 'import' ? 'orders' : 'import')}
+            className="text-xs"
+          >
+            {activeTab === 'import' ? 'View Purchase Orders' : 'Import Distributor Bill'}
+          </Button>
           <Button
             variant={activeTab === 'create' ? 'secondary' : 'primary'}
             size="sm"
@@ -256,6 +437,12 @@ export const PurchasesPage: React.FC = () => {
           className={`pb-2.5 transition-colors border-b-2 ${activeTab === 'create' ? 'border-pharmagreen-600 text-pharmagreen-700' : 'border-transparent text-brand-muted hover:text-brand-text'}`}
         >
           Create Purchase Order
+        </button>
+        <button
+          onClick={() => setActiveTab('import')}
+          className={`pb-2.5 transition-colors border-b-2 ${activeTab === 'import' ? 'border-pharmagreen-600 text-pharmagreen-700' : 'border-transparent text-brand-muted hover:text-brand-text'}`}
+        >
+          Import Distributor Bill
         </button>
         <button
           onClick={() => setActiveTab('prices')}
@@ -543,6 +730,178 @@ export const PurchasesPage: React.FC = () => {
             </Button>
           </div>
         </form>
+      )}
+
+      {/* TAB 3: IMPORT DISTRIBUTOR BILL */}
+      {activeTab === 'import' && (
+        <div className="bg-white rounded-xl border border-brand-border p-6 space-y-5 shadow-2xs">
+          <div>
+            <h2 className="text-sm font-bold text-gray-900 flex items-center gap-2">
+              <Receipt className="w-4 h-4 text-pharmagreen-600" />
+              Import Distributor Bill
+            </h2>
+            <p className="text-xs text-brand-muted mt-0.5">
+              Reads selectable text from varied PDF layouts and uses private, on-device OCR for scanned bills. Review and correct every detected row before inventory is changed.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-[11px] font-semibold text-gray-700 mb-1">Distributor / Supplier</label>
+              <select
+                value={selectedSupplierId}
+                onChange={(e) => setSelectedSupplierId(e.target.value)}
+                className="w-full text-xs bg-[#F8FAF9] border border-brand-border rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-pharmagreen-500"
+              >
+                <option value="">-- Select supplier --</option>
+                {suppliers.map((s) => (
+                  <option key={s._id || s.id} value={s._id || s.id}>{s.name}</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-semibold text-gray-700 mb-1">Invoice Reference</label>
+              <input
+                type="text"
+                value={billImportFileName || ''}
+                onChange={(e) => setBillImportFileName(e.target.value)}
+                placeholder="INV-2026-001"
+                className="w-full text-xs bg-[#F8FAF9] border border-brand-border rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-pharmagreen-500"
+              />
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-dashed border-brand-border bg-[#F8FAF9] p-4">
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <div>
+                <div className="text-[11px] font-semibold text-gray-700">Upload supplier bill</div>
+                <div className="text-[10px] text-brand-muted">PDF only. Bill pages are processed in this browser.</div>
+              </div>
+              <label className="inline-flex items-center justify-center px-3 py-2 rounded-lg bg-pharmagreen-600 text-white text-[11px] font-semibold cursor-pointer hover:bg-pharmagreen-700">
+                <input type="file" accept=".pdf,application/pdf" className="hidden" onChange={handleBillFileUpload} />
+                Choose PDF Bill
+              </label>
+            </div>
+            {billImportProgress && <div className="mt-3 text-[11px] text-pharmagreen-800">{billImportProgress}</div>}
+          </div>
+
+          <div>
+            <label className="block text-[11px] font-semibold text-gray-700 mb-1">Notes</label>
+            <textarea
+              rows={2}
+              value={billImportNote}
+              onChange={(e) => setBillImportNote(e.target.value)}
+              placeholder="Optional remarks for this incoming stock"
+              className="w-full text-xs bg-[#F8FAF9] border border-brand-border rounded-lg p-2.5 focus:outline-none focus:ring-1 focus:ring-pharmagreen-500"
+            />
+          </div>
+
+          {billImportItems.length > 0 ? (
+            <div className="border border-brand-border rounded-xl overflow-hidden">
+              <div className="flex items-center justify-between gap-3 p-3 bg-amber-50 border-b border-amber-200 text-[11px] text-amber-900">
+                <span>Detected values can be wrong if the bill is unclear. Verify the unit cost, quantity, batch, and expiry before importing.</span>
+                <button
+                  type="button"
+                  onClick={() => setBillImportItems([...billImportItems, {
+                    medicineName: '',
+                    quantity: 0,
+                    purchasePrice: 0,
+                    sellingPrice: undefined,
+                    batchNumber: '',
+                    expiryDate: '',
+                  }])}
+                  className="shrink-0 font-semibold underline"
+                >
+                  Add row
+                </button>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-[11px]">
+                  <thead className="bg-[#F8FAF9] text-brand-muted font-semibold border-b border-brand-border">
+                    <tr>
+                      <th className="px-3 py-2">Medicine</th>
+                      <th className="px-3 py-2">Qty</th>
+                      <th className="px-3 py-2">Unit Cost</th>
+                      <th className="px-3 py-2">Line Total</th>
+                      <th className="px-3 py-2">MRP</th>
+                      <th className="px-3 py-2">Batch</th>
+                      <th className="px-3 py-2">Expiry</th>
+                      <th className="px-3 py-2"> </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-brand-border">
+                    {billImportItems.map((item, idx) => (
+                      <tr key={`${item.medicineName}-${idx}`} className="hover:bg-slate-50/70">
+                        <td className="px-2 py-2"><input aria-label={`Medicine name row ${idx + 1}`} value={item.medicineName} onChange={(e) => setBillImportItems(billImportItems.map((row, i) => i === idx ? { ...row, medicineName: e.target.value } : row))} className="w-44 min-w-32 rounded border border-brand-border px-2 py-1" /></td>
+                        <td className="px-2 py-2"><input aria-label={`Quantity row ${idx + 1}`} type="number" min="1" value={item.quantity || ''} onChange={(e) => setBillImportItems(billImportItems.map((row, i) => i === idx ? { ...row, quantity: Number(e.target.value) } : row))} className="w-20 rounded border border-brand-border px-2 py-1 font-bold text-pharmagreen-800" /></td>
+                        <td className="px-2 py-2"><input aria-label={`Unit cost row ${idx + 1}`} type="number" min="0.01" step="0.01" value={item.purchasePrice || ''} onChange={(e) => setBillImportItems(billImportItems.map((row, i) => i === idx ? { ...row, purchasePrice: Number(e.target.value) } : row))} className="w-24 rounded border border-brand-border px-2 py-1 font-mono" /></td>
+                        <td className="px-3 py-2 font-mono">₹{(Number(item.quantity || 0) * Number(item.purchasePrice || 0)).toFixed(2)}</td>
+                        <td className="px-2 py-2"><input aria-label={`MRP row ${idx + 1}`} type="number" min="0" step="0.01" value={item.sellingPrice || ''} onChange={(e) => setBillImportItems(billImportItems.map((row, i) => i === idx ? { ...row, sellingPrice: Number(e.target.value) || undefined } : row))} className="w-24 rounded border border-brand-border px-2 py-1 font-mono" /></td>
+                        <td className="px-2 py-2"><input aria-label={`Batch number row ${idx + 1}`} value={item.batchNumber} onChange={(e) => setBillImportItems(billImportItems.map((row, i) => i === idx ? { ...row, batchNumber: e.target.value } : row))} className="w-24 rounded border border-brand-border px-2 py-1 font-mono" /></td>
+                        <td className="px-2 py-2"><input aria-label={`Expiry date row ${idx + 1}`} type="date" value={item.expiryDate} onChange={(e) => setBillImportItems(billImportItems.map((row, i) => i === idx ? { ...row, expiryDate: e.target.value } : row))} className="w-32 rounded border border-brand-border px-2 py-1" /></td>
+                        <td className="px-2 py-2"><button type="button" aria-label={`Remove row ${idx + 1}`} onClick={() => setBillImportItems(billImportItems.filter((_, i) => i !== idx))} className="text-red-600 hover:text-red-800"><X className="w-4 h-4" /></button></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : (
+            <div className="border border-dashed border-brand-border rounded-xl p-8 text-center text-xs text-brand-muted">
+              No invoice items parsed yet. Upload a PDF bill or add medicine rows manually.
+              <button
+                type="button"
+                onClick={() => setBillImportItems([{
+                  medicineName: '',
+                  quantity: 0,
+                  purchasePrice: 0,
+                  batchNumber: '',
+                  expiryDate: '',
+                }])}
+                className="block mx-auto mt-3 font-semibold text-pharmagreen-700 underline"
+              >
+                Add medicine row
+              </button>
+            </div>
+          )}
+
+          <div className="pt-2 flex justify-end gap-2 border-t border-brand-border">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setBillImportItems([]);
+                setBillImportFileName('');
+                setBillImportNote('');
+                setActiveTab('orders');
+              }}
+              className="text-xs"
+            >
+              Clear
+            </Button>
+            <Button
+              type="button"
+              variant="primary"
+              size="sm"
+              onClick={handleImportDistributorBill}
+              icon={<PackageCheck className="w-4 h-4" />}
+              className="text-xs disabled:opacity-60"
+              disabled={!billImportItems.length || billImportItems.some((item) =>
+                !item.medicineName.trim() ||
+                !Number.isFinite(item.quantity) ||
+                item.quantity <= 0 ||
+                !Number.isFinite(item.purchasePrice) ||
+                item.purchasePrice <= 0 ||
+                !item.batchNumber.trim() ||
+                !item.expiryDate
+              )}
+            >
+              Import to Inventory
+            </Button>
+          </div>
+        </div>
       )}
 
       {/* TAB 3: SUPPLIER PRICE COMPARISON */}

@@ -37,6 +37,7 @@ Unlike basic CRUD tools, MediSync mirrors real pharmaceutical workflows:
 |---|---|
 | 💊 **Medicine & Batch Catalog** | Create drug formulations once; track individual physical batches with lot numbers, expiry dates, purchase rates, and MRPs. |
 | ⚡ **FEFO Counter POS Billing** | Quick barcode scanning and billing with automatic First-Expiry, First-Out stock deduction and printable invoices. |
+| 🧾 **Distributor PDF Import** | Extract medicine rows, quantities, prices, batch numbers, and expiries from selectable-text or scanned PDF bills, then review and correct them before stock is updated. |
 | 🏥 **Hospital Prescriptions & Dispensing** | Manage clinical doctor orders, patient admissions, dose verification, and partial inpatient dispensing. |
 | 📦 **Purchase Orders & Restocking** | Manage the full PO lifecycle (`Draft` → `Ordered` → `Received`) with one-click shipment inwarding. |
 | ⏳ **5-Tier Expiry Radar** | Color-coded expiry alerts: Expired, Critical ($\le$ 7 days), High Priority ($\le$ 30 days), Moderate ($\le$ 60 days), and Safe ($>$ 60 days). |
@@ -135,6 +136,10 @@ The frontend application will open on **`http://localhost:5173`** (or `http://lo
 ---
 
 ## 🔑 Demo Login Credentials
+
+### Distributor bill import
+
+In **Purchases & Restocking → Import Distributor Bill**, upload a distributor PDF. Text-based PDFs are read locally in the browser; scanned pages use English OCR in the browser. The importer recognizes common table and labeled-field layouts, calculates unit cost from line amount and quantity when needed, and shows editable rows for pharmacist verification before adding any stock. Medicine name, quantity, unit cost, batch number, and expiry are required for every row. OCR is a best-effort aid rather than a guarantee for every invoice layout or scan quality; verify all values against the original bill. The bill itself is not uploaded to an OCR service.
 
 You can test the application using any of the pre-configured accounts:
 

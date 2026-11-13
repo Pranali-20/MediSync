@@ -120,14 +120,14 @@ export const BillingPage: React.FC = () => {
     });
   }, [medicines, searchTerm, selectedCategory]);
 
-  // Add to cart with automated FEFO batch resolution
-  const handleAddToCart = (medicine: Medicine) => {
+  // Add to cart with automated FEFO batch resolution and quantity support
+  const handleAddToCart = (medicine: Medicine, qtyToAdd: number = 1) => {
     const activeBatches = (medicine.batches || [])
       .filter((b) => b.quantity > 0)
       .sort((a, b) => new Date(a.expiryDate).getTime() - new Date(b.expiryDate).getTime());
 
     if (activeBatches.length === 0) {
-      alert(`Cannot add ${medicine.name}: Currently out of stock.`);
+      showToast('Out of Stock', `Cannot add ${medicine.name}: Currently out of stock.`, 'error');
       return;
     }
 
@@ -138,23 +138,29 @@ export const BillingPage: React.FC = () => {
 
     if (existingIndex !== -1) {
       const existing = cart[existingIndex];
-      if (existing.quantity + 1 > fefoBatch.quantity) {
-        alert(`Maximum stock reached for Batch ${fefoBatch.batchNumber} (${fefoBatch.quantity} available).`);
+      const maxAllowed = fefoBatch.quantity;
+      if (existing.quantity >= maxAllowed) {
+        showToast('Stock Limit Reached', `Maximum stock reached for Batch ${fefoBatch.batchNumber} (${maxAllowed} available).`, 'warning');
         return;
       }
+      const newQuantity = Math.min(existing.quantity + qtyToAdd, maxAllowed);
       const updated = [...cart];
-      updated[existingIndex].quantity += 1;
+      updated[existingIndex].quantity = newQuantity;
       setCart(updated);
+      showToast('Cart Updated', `Set ${medicine.name} to ${newQuantity} units.`, 'info');
     } else {
+      const maxAllowed = fefoBatch.quantity;
+      const initialQty = Math.min(qtyToAdd, maxAllowed);
       setCart([
         ...cart,
         {
           medicine,
           selectedBatch: fefoBatch,
-          quantity: 1,
+          quantity: initialQty,
           unitPrice: fefoBatch.sellingPrice || medicine.sellingPrice || 20,
         },
       ]);
+      showToast('Added to Bill', `Added ${initialQty} × ${medicine.name} to bill.`, 'success');
     }
   };
 
@@ -164,8 +170,12 @@ export const BillingPage: React.FC = () => {
       return;
     }
     const item = cart[index];
-    if (newQty > item.selectedBatch.quantity) {
-      alert(`Cannot exceed batch stock of ${item.selectedBatch.quantity} units.`);
+    const maxStock = item.selectedBatch.quantity;
+    if (newQty > maxStock) {
+      showToast('Stock Limit Reached', `Cannot exceed batch stock of ${maxStock} units for ${item.medicine.name}.`, 'warning');
+      const updated = [...cart];
+      updated[index].quantity = maxStock;
+      setCart(updated);
       return;
     }
     const updated = [...cart];
@@ -188,18 +198,26 @@ export const BillingPage: React.FC = () => {
     setCart(updated);
   };
 
-  // Cart Financials
+  // Cart Financials with strict 2-decimal precision
   const subtotal = useMemo(() => {
-    return cart.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0);
+    return Number(cart.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0).toFixed(2));
   }, [cart]);
 
   const discountAmount = useMemo(() => {
-    return (subtotal * discountPercent) / 100;
+    return Number(((subtotal * discountPercent) / 100).toFixed(2));
   }, [subtotal, discountPercent]);
 
-  const taxableAmount = subtotal - discountAmount;
-  const taxAmount = (taxableAmount * 12) / 100; // 12% GST
-  const grandTotal = taxableAmount + taxAmount;
+  const taxableAmount = useMemo(() => {
+    return Number((subtotal - discountAmount).toFixed(2));
+  }, [subtotal, discountAmount]);
+
+  const taxAmount = useMemo(() => {
+    return Number(((taxableAmount * 12) / 100).toFixed(2)); // 12% GST
+  }, [taxableAmount]);
+
+  const grandTotal = useMemo(() => {
+    return Number((taxableAmount + taxAmount).toFixed(2));
+  }, [taxableAmount, taxAmount]);
 
   // Checkout & Submit Sale
   const handleCheckout = async () => {
@@ -376,42 +394,83 @@ export const BillingPage: React.FC = () => {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {availableMedicines.map((med) => {
                   const activeBatches = (med.batches || []).filter((b) => b.quantity > 0);
-                  const isOutOfStock = med.totalStock === 0 || activeBatches.length === 0;
+                  const totalStock = med.totalStock ?? activeBatches.reduce((acc, b) => acc + b.quantity, 0);
+                  const isOutOfStock = totalStock <= 0 || activeBatches.length === 0;
                   const earliestBatch = activeBatches.sort(
                     (a, b) => new Date(a.expiryDate).getTime() - new Date(b.expiryDate).getTime()
                   )[0];
+                  const inCartItem = cart.find(
+                    (item) => (item.medicine._id || item.medicine.id) === (med._id || med.id)
+                  );
 
                   return (
                     <div
                       key={med._id || med.id}
-                      onClick={() => !isOutOfStock && handleAddToCart(med)}
-                      className={`p-3.5 rounded-xl border transition-all select-none ${
+                      className={`p-3.5 rounded-xl border transition-all ${
                         isOutOfStock
-                          ? 'bg-gray-50 border-gray-200 opacity-60 cursor-not-allowed'
-                          : 'bg-white border-brand-border hover:border-pharmagreen-500 hover:shadow-xs cursor-pointer'
+                          ? 'bg-gray-50 border-gray-200 opacity-60'
+                          : inCartItem
+                          ? 'bg-emerald-50/40 border-pharmagreen-400 shadow-2xs'
+                          : 'bg-white border-brand-border hover:border-pharmagreen-400 hover:shadow-2xs'
                       }`}
                     >
                       <div className="flex justify-between items-start gap-2">
                         <div className="truncate">
-                          <h3 className="font-bold text-gray-900 text-xs truncate">{med.name}</h3>
-                          <p className="text-[11px] text-brand-muted font-mono truncate">{med.genericName}</p>
+                          <h3 className="font-bold text-gray-900 text-xs truncate" title={med.name}>
+                            {med.name}
+                          </h3>
                         </div>
-                        <span className="font-bold text-xs text-pharmagreen-800 font-mono">
-                          ₹{med.sellingPrice?.toFixed(2)}
+                        <span className="font-bold text-xs text-pharmagreen-800 font-mono shrink-0">
+                          ₹{(med.sellingPrice ?? med.unitPrice ?? 0).toFixed(2)}
                         </span>
                       </div>
 
-                      <div className="mt-3 pt-2 border-t border-gray-100 flex items-center justify-between text-[11px]">
+                      <div className="mt-2 pt-2 border-t border-gray-100 flex items-center justify-between text-[11px]">
                         <span className={`font-semibold ${isOutOfStock ? 'text-red-600' : 'text-gray-700'}`}>
-                          {isOutOfStock ? '0 in stock' : `${med.totalStock} ${med.unit || 'units'}`}
+                          {isOutOfStock ? '0 in stock' : `${totalStock} in stock`}
                         </span>
 
-                        {earliestBatch && (
+                        {inCartItem && (
+                          <span className="text-[10px] font-bold text-pharmagreen-700 bg-pharmagreen-100 px-1.5 py-0.5 rounded">
+                            {inCartItem.quantity} in bill
+                          </span>
+                        )}
+                        {!inCartItem && earliestBatch && !isOutOfStock && (
                           <span className="text-[10px] text-gray-500 font-mono">
-                            FEFO: Lot #{earliestBatch.batchNumber}
+                            Lot #{earliestBatch.batchNumber}
                           </span>
                         )}
                       </div>
+
+                      {!isOutOfStock && (
+                        <div className="mt-2.5 pt-2 border-t border-dashed border-gray-200 flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => handleAddToCart(med, 1)}
+                            className="flex-1 py-1 px-2 rounded-md bg-pharmagreen-50 hover:bg-pharmagreen-100 text-pharmagreen-700 text-[11px] font-bold border border-pharmagreen-200 text-center transition-colors flex items-center justify-center gap-1"
+                          >
+                            <Plus className="w-3 h-3" /> Add to Bill
+                          </button>
+                          <div className="flex items-center gap-1">
+                            {[2, 3, 4].map((qty) => (
+                              <button
+                                key={qty}
+                                type="button"
+                                disabled={totalStock < qty}
+                                onClick={() => handleAddToCart(med, qty)}
+                                className={`px-2 py-1 rounded-md text-[10px] font-bold border transition-colors ${
+                                  totalStock >= qty
+                                    ? 'bg-white hover:bg-pharmagreen-50 text-gray-700 border-gray-200 hover:border-pharmagreen-300'
+                                    : 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed opacity-50'
+                                }`}
+                                title={`Add ${qty} units based on available stock`}
+                              >
+                                +{qty}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   );
                 })}
@@ -459,66 +518,126 @@ export const BillingPage: React.FC = () => {
                 </div>
               </div>
 
-              {/* Cart Items List with Batch Override */}
+              {/* Cart Items List with Batch Override & Quick Multi-Quantity */}
               <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
                 {cart.length === 0 ? (
                   <div className="py-12 text-center text-xs text-brand-muted border border-dashed border-brand-border rounded-xl">
                     Cart is empty. Click medicines from the catalog to add items.
                   </div>
                 ) : (
-                  cart.map((item, idx) => (
-                    <div key={idx} className="p-2.5 bg-[#F8FAF9] rounded-lg border border-brand-border text-xs space-y-1.5">
-                      <div className="flex justify-between items-start">
-                        <span className="font-bold text-gray-900 truncate">{item.medicine.name}</span>
-                        <span className="font-bold font-mono text-gray-900">
-                          ₹{(item.quantity * item.unitPrice).toFixed(2)}
-                        </span>
-                      </div>
+                  cart.map((item, idx) => {
+                    const maxStock = item.selectedBatch.quantity;
+                    const itemTotal = Number((item.quantity * item.unitPrice).toFixed(2));
 
-                      <div className="flex items-center justify-between text-[11px] gap-2">
-                        {/* Batch Selector Dropdown */}
-                        <div className="flex items-center gap-1">
-                          <span className="text-[10px] text-brand-muted">Batch:</span>
-                          <select
-                            value={item.selectedBatch._id || item.selectedBatch.id}
-                            onChange={(e) => handleSwitchBatch(idx, e.target.value)}
-                            className="bg-white border border-brand-border rounded px-1.5 py-0.5 text-[10px] font-mono font-bold text-pharmagreen-800 focus:outline-none"
-                          >
-                            {(item.medicine.batches || [])
-                              .filter((b) => b.quantity > 0)
-                              .map((b) => (
-                                <option key={b._id || b.id} value={b._id || b.id}>
-                                  #{b.batchNumber} (Exp: {new Date(b.expiryDate).toLocaleDateString()}, {b.quantity} left)
-                                </option>
-                              ))}
-                          </select>
+                    return (
+                      <div key={idx} className="p-3 bg-[#F8FAF9] rounded-lg border border-brand-border text-xs space-y-2">
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <span className="font-bold text-gray-900 block">{item.medicine.name}</span>
+                            <span className="text-[10px] text-gray-500 font-mono">
+                              ₹{item.unitPrice.toFixed(2)}/unit • {maxStock} in batch
+                            </span>
+                          </div>
+                          <span className="font-bold font-mono text-gray-900 text-sm">
+                            ₹{itemTotal.toFixed(2)}
+                          </span>
                         </div>
 
-                        {/* Quantity Controls */}
-                        <div className="flex items-center gap-1.5">
-                          <button
-                            onClick={() => handleUpdateQty(idx, item.quantity - 1)}
-                            className="w-5 h-5 rounded bg-white border border-brand-border flex items-center justify-center hover:bg-gray-100 font-bold"
-                          >
-                            -
-                          </button>
-                          <span className="w-6 text-center font-bold font-mono">{item.quantity}</span>
-                          <button
-                            onClick={() => handleUpdateQty(idx, item.quantity + 1)}
-                            className="w-5 h-5 rounded bg-white border border-brand-border flex items-center justify-center hover:bg-gray-100 font-bold"
-                          >
-                            +
-                          </button>
-                          <button
-                            onClick={() => handleUpdateQty(idx, 0)}
-                            className="text-red-400 hover:text-red-600 p-0.5 ml-1"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+                        <div className="flex items-center justify-between text-[11px] gap-2 pt-1 border-t border-gray-100">
+                          {/* Batch Selector Dropdown */}
+                          <div className="flex items-center gap-1">
+                            <span className="text-[10px] text-brand-muted">Batch:</span>
+                            <select
+                              value={item.selectedBatch._id || item.selectedBatch.id}
+                              onChange={(e) => handleSwitchBatch(idx, e.target.value)}
+                              className="bg-white border border-brand-border rounded px-1.5 py-0.5 text-[10px] font-mono font-bold text-pharmagreen-800 focus:outline-none"
+                            >
+                              {(item.medicine.batches || [])
+                                .filter((b) => b.quantity > 0)
+                                .map((b) => (
+                                  <option key={b._id || b.id} value={b._id || b.id}>
+                                    #{b.batchNumber} (Exp: {new Date(b.expiryDate).toLocaleDateString()}, {b.quantity} left)
+                                  </option>
+                                ))}
+                            </select>
+                          </div>
+
+                          {/* Quantity Controls with Direct Number Input */}
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => handleUpdateQty(idx, item.quantity - 1)}
+                              className="w-5 h-5 rounded bg-white border border-brand-border flex items-center justify-center hover:bg-gray-100 font-bold"
+                            >
+                              -
+                            </button>
+                            <input
+                              type="number"
+                              min="1"
+                              max={maxStock}
+                              value={item.quantity}
+                              onChange={(e) => {
+                                const val = parseInt(e.target.value);
+                                if (!isNaN(val)) handleUpdateQty(idx, val);
+                              }}
+                              className="w-10 text-center font-bold font-mono bg-white border border-brand-border rounded py-0.5 text-xs focus:ring-1 focus:ring-pharmagreen-500"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => handleUpdateQty(idx, item.quantity + 1)}
+                              className="w-5 h-5 rounded bg-white border border-brand-border flex items-center justify-center hover:bg-gray-100 font-bold"
+                            >
+                              +
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleUpdateQty(idx, 0)}
+                              className="text-red-400 hover:text-red-600 p-0.5 ml-1"
+                              title="Remove item"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Quick Quantity Presets: [1] [2] [3] [4] [Max] */}
+                        <div className="flex items-center gap-1 pt-1">
+                          <span className="text-[10px] text-gray-500">Quick Qty:</span>
+                          {[1, 2, 3, 4].map((q) => (
+                            <button
+                              key={q}
+                              type="button"
+                              disabled={maxStock < q}
+                              onClick={() => handleUpdateQty(idx, q)}
+                              className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-bold border transition-colors ${
+                                item.quantity === q
+                                  ? 'bg-pharmagreen-600 text-white border-pharmagreen-600'
+                                  : maxStock >= q
+                                  ? 'bg-white text-gray-700 border-brand-border hover:bg-pharmagreen-50'
+                                  : 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed opacity-50'
+                              }`}
+                            >
+                              {q}
+                            </button>
+                          ))}
+                          {maxStock > 4 && (
+                            <button
+                              type="button"
+                              onClick={() => handleUpdateQty(idx, maxStock)}
+                              className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-bold border transition-colors ${
+                                item.quantity === maxStock
+                                  ? 'bg-pharmagreen-600 text-white border-pharmagreen-600'
+                                  : 'bg-white text-gray-700 border-brand-border hover:bg-pharmagreen-50'
+                              }`}
+                              title={`Set to max stock (${maxStock})`}
+                            >
+                              Max ({maxStock})
+                            </button>
+                          )}
                         </div>
                       </div>
-                    </div>
-                  ))
+                    );
+                  })
                 )}
               </div>
 
@@ -544,19 +663,42 @@ export const BillingPage: React.FC = () => {
                     </div>
                   </div>
 
-                  {/* Summary Breakdown */}
-                  <div className="space-y-1 text-xs pt-1">
-                    <div className="flex justify-between text-brand-muted">
-                      <span>Subtotal:</span>
-                      <span className="font-mono">₹{subtotal.toFixed(2)}</span>
+                  {/* Optional Discount Input */}
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[11px] text-brand-muted">Discount (%):</span>
+                    <input
+                      type="number"
+                      min="0"
+                      max="100"
+                      value={discountPercent}
+                      onChange={(e) => setDiscountPercent(Math.min(100, Math.max(0, Number(e.target.value) || 0)))}
+                      className="w-16 bg-[#F8FAF9] border border-brand-border rounded px-2 py-1 text-xs text-right font-mono focus:outline-none focus:ring-1 focus:ring-pharmagreen-500"
+                    />
+                  </div>
+
+                  {/* Exact Financial Summary Breakdown */}
+                  <div className="space-y-1.5 text-xs pt-2 border-t border-brand-border">
+                    <div className="flex justify-between text-gray-600">
+                      <span>Subtotal ({cart.reduce((s, i) => s + i.quantity, 0)} items):</span>
+                      <span className="font-mono font-medium">₹{subtotal.toFixed(2)}</span>
                     </div>
-                    <div className="flex justify-between text-brand-muted">
-                      <span>GST (12% Included):</span>
-                      <span className="font-mono">₹{taxAmount.toFixed(2)}</span>
+                    {discountAmount > 0 && (
+                      <div className="flex justify-between text-emerald-700 font-medium">
+                        <span>Discount ({discountPercent}%):</span>
+                        <span className="font-mono">-₹{discountAmount.toFixed(2)}</span>
+                      </div>
+                    )}
+                    <div className="flex justify-between text-gray-600">
+                      <span>Taxable Amount:</span>
+                      <span className="font-mono">₹{taxableAmount.toFixed(2)}</span>
                     </div>
-                    <div className="flex justify-between font-bold text-sm text-gray-900 pt-1.5 border-t border-brand-border">
+                    <div className="flex justify-between text-gray-600">
+                      <span>GST (12%):</span>
+                      <span className="font-mono text-gray-800">+₹{taxAmount.toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between font-bold text-sm text-gray-900 pt-2 border-t border-brand-border">
                       <span>Total Due:</span>
-                      <span className="text-pharmagreen-800 font-mono">₹{grandTotal.toFixed(2)}</span>
+                      <span className="text-pharmagreen-800 font-mono text-base">₹{grandTotal.toFixed(2)}</span>
                     </div>
                   </div>
 
