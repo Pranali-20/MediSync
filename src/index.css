@@ -27,21 +27,129 @@
   background: #94A3B8;
 }
 
-/* Minimalist printable receipt styling */
+#printable-receipt {
+  display: none;
+}
+
 @media print {
+  @page {
+    margin: 12mm;
+  }
+
   body * {
-    visibility: hidden;
+    visibility: hidden !important;
   }
-  #printable-receipt, #printable-receipt * {
-    visibility: visible;
+
+  #printable-receipt,
+  #printable-receipt * {
+    visibility: visible !important;
   }
+
   #printable-receipt {
+    display: block !important;
     position: absolute;
     left: 0;
     top: 0;
     width: 100%;
     margin: 0;
-    padding: 20px;
-    background: white;
+    padding: 0;
+    color: #111827;
+    background: #fff;
+    font: 12px Arial, sans-serif;
+    box-sizing: border-box;
+  }
+
+  .receipt-header {
+    padding-bottom: 12px;
+    text-align: center;
+    border-bottom: 1px solid #9ca3af;
+  }
+
+  .receipt-header h1 {
+    margin: 0 0 4px;
+    font-size: 20px;
+    font-weight: 700;
+  }
+
+  .receipt-header p {
+    margin: 2px 0;
+    font-size: 11px;
+  }
+
+  .receipt-header h2 {
+    margin: 12px 0 0;
+    font-size: 14px;
+    letter-spacing: 0.08em;
+  }
+
+  .receipt-details {
+    display: grid;
+    gap: 5px;
+    padding: 12px 0;
+  }
+
+  .receipt-details div,
+  .receipt-totals div {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .receipt-items {
+    width: 100%;
+    border-collapse: collapse;
+  }
+
+  .receipt-items th,
+  .receipt-items td {
+    padding: 7px 4px;
+    text-align: right;
+    vertical-align: top;
+    border-bottom: 1px solid #d1d5db;
+  }
+
+  .receipt-items th:first-child,
+  .receipt-items td:first-child {
+    width: 48%;
+    text-align: left;
+  }
+
+  .receipt-item-meta {
+    display: block;
+    margin-top: 2px;
+    color: #4b5563;
+    font-size: 10px;
+  }
+
+  .receipt-totals {
+    display: grid;
+    gap: 6px;
+    width: 55%;
+    margin: 12px 0 0 auto;
+  }
+
+  .receipt-grand-total {
+    padding-top: 7px;
+    font-size: 14px;
+    border-top: 1px solid #111827;
+  }
+
+  .receipt-footer {
+    margin-top: 28px;
+    text-align: center;
+    font-size: 10px;
+  }
+
+  .receipt-footer p {
+    margin: 4px 0;
+  }
+
+  tr {
+    break-inside: avoid;
+  }
+
+  * {
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
   }
 }

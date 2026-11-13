@@ -649,6 +649,15 @@ export const BillingPage: React.FC = () => {
                             <Button
                               variant="outline"
                               size="sm"
+                              icon={<Printer className="w-3.5 h-3.5" />}
+                              onClick={() => setCompletedBill(sale)}
+                              className="text-[11px] py-1 px-2.5"
+                            >
+                              View / Print
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
                               icon={<RotateCcw className="w-3.5 h-3.5" />}
                               onClick={() => handleOpenReturnModal(sale)}
                               className="text-[11px] py-1 px-2.5"
@@ -675,7 +684,7 @@ export const BillingPage: React.FC = () => {
               <div className="w-10 h-10 rounded-full bg-emerald-100 text-pharmagreen-700 flex items-center justify-center mx-auto mb-2">
                 <CheckCircle2 className="w-6 h-6" />
               </div>
-              <h2 className="text-base font-bold text-gray-900">Payment Invoice Generated</h2>
+              <h2 className="text-base font-bold text-gray-900">Invoice Receipt</h2>
               <p className="text-[11px] text-brand-muted">{completedBill.invoiceNumber}</p>
             </div>
 
@@ -722,6 +731,91 @@ export const BillingPage: React.FC = () => {
                 Done
               </Button>
             </div>
+          </div>
+
+          <div id="printable-receipt" aria-hidden="true">
+            <header className="receipt-header">
+              <h1>{user?.pharmacyName || 'MediSync Pharmacy'}</h1>
+              {user?.pharmacy?.address || user?.address ? (
+                <p>{user?.pharmacy?.address || user?.address}</p>
+              ) : null}
+              {user?.pharmacy?.phone || user?.phone ? (
+                <p>Phone: {user?.pharmacy?.phone || user?.phone}</p>
+              ) : null}
+              {(user?.pharmacy?.gstNumber || user?.gstNumber) && (
+                <p>GSTIN: {user?.pharmacy?.gstNumber || user?.gstNumber}</p>
+              )}
+              {user?.pharmacy?.licenseNumber || user?.licenseNumber ? (
+                <p>License: {user?.pharmacy?.licenseNumber || user?.licenseNumber}</p>
+              ) : null}
+              <h2>SALES RECEIPT</h2>
+            </header>
+
+            <section className="receipt-details">
+              <div><strong>Invoice:</strong><span>{completedBill.invoiceNumber}</span></div>
+              <div>
+                <strong>Date:</strong>
+                <span>{new Date(completedBill.createdAt || completedBill.date || Date.now()).toLocaleString()}</span>
+              </div>
+              <div><strong>Customer:</strong><span>{completedBill.customerName || 'Walk-in Customer'}</span></div>
+              {completedBill.customerPhone && (
+                <div><strong>Phone:</strong><span>{completedBill.customerPhone}</span></div>
+              )}
+              {completedBill.doctorName && (
+                <div><strong>Doctor:</strong><span>{completedBill.doctorName}</span></div>
+              )}
+              <div><strong>Payment:</strong><span>{completedBill.paymentMethod}</span></div>
+            </section>
+
+            <table className="receipt-items">
+              <thead>
+                <tr>
+                  <th>Item</th>
+                  <th>Qty</th>
+                  <th>Rate</th>
+                  <th>Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                {completedBill.items.map((item, index) => (
+                  <tr key={item._id || `${item.medicineName}-${index}`}>
+                    <td>
+                      <strong>{item.medicineName}</strong>
+                      <span className="receipt-item-meta">Batch: {item.batchNumber}</span>
+                      {item.expiryDate && (
+                        <span className="receipt-item-meta">
+                          Expiry: {new Date(item.expiryDate).toLocaleDateString()}
+                        </span>
+                      )}
+                    </td>
+                    <td>{item.quantity}</td>
+                    <td>₹{Number(item.unitPrice || 0).toFixed(2)}</td>
+                    <td>₹{Number(item.subtotal ?? item.quantity * item.unitPrice).toFixed(2)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            <section className="receipt-totals">
+              <div><span>Subtotal</span><span>₹{Number(completedBill.subtotal || 0).toFixed(2)}</span></div>
+              {completedBill.discountAmount > 0 && (
+                <div>
+                  <span>Discount ({completedBill.discountPercent || 0}%)</span>
+                  <span>-₹{Number(completedBill.discountAmount).toFixed(2)}</span>
+                </div>
+              )}
+              <div><span>GST</span><span>₹{Number(completedBill.taxAmount || 0).toFixed(2)}</span></div>
+              <div className="receipt-grand-total">
+                <strong>Total Paid</strong>
+                <strong>₹{Number(completedBill.totalAmount || 0).toFixed(2)}</strong>
+              </div>
+            </section>
+
+            <footer className="receipt-footer">
+              <p>Served by: {completedBill.pharmacistName || user?.name || 'Pharmacist'}</p>
+              <p>Thank you for your visit!</p>
+              <p>Please retain this receipt for your records.</p>
+            </footer>
           </div>
         </div>
       )}
