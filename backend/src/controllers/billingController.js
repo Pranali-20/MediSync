@@ -94,15 +94,60 @@ const createSale = async (req, res, next) => {
     const taxAmount = Number(((taxableAmount * taxRate) / 100).toFixed(2));
     const totalAmount = Number((taxableAmount + taxAmount).toFixed(2));
 
-    const invoiceNumber = await generateInvoiceNumber(req.pharmacyId);
+    let invoiceNumber = await generateInvoiceNumber(req.pharmacyId);
 
-    // Deduct stock and record transactions
+    // Create the Sale record first with collision retry to avoid orphaned stock deductions
+    let sale = null;
+    let attempts = 0;
+    while (!sale && attempts < 3) {
+      attempts += 1;
+      try {
+        sale = await Sale.create({
+          pharmacy: req.pharmacyId,
+          invoiceNumber,
+          customerName: customerName || 'Walk-in Customer',
+          customerPhone: customerPhone || '',
+          doctorName: doctorName || '',
+          items: validatedItems.map((v) => ({
+            medicine: v.medicine,
+            medicineName: v.medicineName,
+            genericName: v.genericName,
+            batch: v.batch,
+            batchNumber: v.batchNumber,
+            expiryDate: v.expiryDate,
+            quantity: v.quantity,
+            quantityReturned: 0,
+            unitPrice: v.unitPrice,
+            taxPercent: v.taxPercent,
+            subtotal: v.subtotal,
+          })),
+          subtotal: Number(subtotal.toFixed(2)),
+          discountPercent: discPercent,
+          discountAmount: Number(discountAmount.toFixed(2)),
+          taxAmount: Number(taxAmount.toFixed(2)),
+          totalAmount: Number(totalAmount.toFixed(2)),
+          paymentMethod,
+          status: 'COMPLETED',
+          createdBy: req.userId,
+          pharmacistName: req.user?.name || 'Pharmacist',
+        });
+      } catch (err) {
+        if (err.code === 11000 && (err.keyPattern?.invoiceNumber || String(err.message).includes('invoiceNumber'))) {
+          invoiceNumber = await generateInvoiceNumber(req.pharmacyId);
+          if (attempts >= 3) throw err;
+        } else {
+          throw err;
+        }
+      }
+    }
+
+    // Now safely deduct stock and record transactions
     for (const vItem of validatedItems) {
       const prevStock = vItem.batchDoc.quantity;
       vItem.batchDoc.quantity -= vItem.quantity;
       await vItem.batchDoc.save();
 
-      const updatedMed = await inventoryService.recalculateMedicineStock(vItem.medicine);
+      await inventoryService.recalculateMedicineStock(vItem.medicine);
 
       await inventoryService.recordTransaction({
         pharmacyId: req.pharmacyId,
@@ -119,36 +164,6 @@ const createSale = async (req, res, next) => {
         createdBy: req.userId,
       });
     }
-
-    const sale = await Sale.create({
-      pharmacy: req.pharmacyId,
-      invoiceNumber,
-      customerName: customerName || 'Walk-in Customer',
-      customerPhone: customerPhone || '',
-      doctorName: doctorName || '',
-      items: validatedItems.map((v) => ({
-        medicine: v.medicine,
-        medicineName: v.medicineName,
-        genericName: v.genericName,
-        batch: v.batch,
-        batchNumber: v.batchNumber,
-        expiryDate: v.expiryDate,
-        quantity: v.quantity,
-        quantityReturned: 0,
-        unitPrice: v.unitPrice,
-        taxPercent: v.taxPercent,
-        subtotal: v.subtotal,
-      })),
-      subtotal: Number(subtotal.toFixed(2)),
-      discountPercent: discPercent,
-      discountAmount: Number(discountAmount.toFixed(2)),
-      taxAmount: Number(taxAmount.toFixed(2)),
-      totalAmount: Number(totalAmount.toFixed(2)),
-      paymentMethod,
-      status: 'COMPLETED',
-      createdBy: req.userId,
-      pharmacistName: req.user.name || 'Pharmacist',
-    });
 
     await auditService.log({
       pharmacyId: req.pharmacyId,

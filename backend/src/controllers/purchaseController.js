@@ -14,23 +14,142 @@ const generateOrderNumber = async (pharmacyId) => {
   return `PO-${year}-${String(count + 1).padStart(4, '0')}`;
 };
 
-// Clean raw medicine name from distributor bills
+const PHARMA_MANUFACTURERS = [
+  { pattern: /^(?:IPCA(?:\s+LABS?|\s+LABORATORIES)?)\b[\s\-\:\/\|\#]*/i, name: 'IPCA Laboratories' },
+  { pattern: /^(?:CIPLA(?:\s+LTD)?)\b[\s\-\:\/\|\#]*/i, name: 'Cipla Ltd.' },
+  { pattern: /^(?:SUN(?:\s+PHARMA|\s+PHARMACEUTICALS?)?)\b[\s\-\:\/\|\#]*/i, name: 'Sun Pharma' },
+  { pattern: /^(?:MANKIND(?:\s+PHARMA)?)\b[\s\-\:\/\|\#]*/i, name: 'Mankind Pharma' },
+  { pattern: /^(?:ABBOTT(?:\s+HEALTHCARE)?)\b[\s\-\:\/\|\#]*/i, name: 'Abbott Healthcare' },
+  { pattern: /^(?:ALKEM(?:\s+LABS?|\s+LABORATORIES)?)\b[\s\-\:\/\|\#]*/i, name: 'Alkem Laboratories' },
+  { pattern: /^(?:TORRENT(?:\s+PHARMA)?)\b[\s\-\:\/\|\#]*/i, name: 'Torrent Pharmaceuticals' },
+  { pattern: /^(?:LUPIN(?:\s+LTD)?)\b[\s\-\:\/\|\#]*/i, name: 'Lupin Ltd.' },
+  { pattern: /^(?:GLAXO(?:SMITHKLINE)?|GSK)\b[\s\-\:\/\|\#]*/i, name: 'GlaxoSmithKline' },
+  { pattern: /^(?:DR\.?\s*REDDY'?S?|DRL)\b[\s\-\:\/\|\#]*/i, name: "Dr. Reddy's Laboratories" },
+  { pattern: /^(?:ZYDUS(?:\s+CADILA|\s+HEALTHCARE|\s+LIFESCIENCES)?|CADILA)\b[\s\-\:\/\|\#]*/i, name: 'Zydus Lifesciences' },
+  { pattern: /^(?:INTAS(?:\s+PHARMA)?)\b[\s\-\:\/\|\#]*/i, name: 'Intas Pharmaceuticals' },
+  { pattern: /^(?:ARISTO(?:\s+PHARMA)?)\b[\s\-\:\/\|\#]*/i, name: 'Aristo Pharmaceuticals' },
+  { pattern: /^(?:GLENMARK(?:\s+PHARMA)?)\b[\s\-\:\/\|\#]*/i, name: 'Glenmark Pharmaceuticals' },
+  { pattern: /^(?:MICRO(?:\s+LABS)?)\b[\s\-\:\/\|\#]*/i, name: 'Micro Labs Ltd.' },
+  { pattern: /^(?:USV(?:\s+LTD)?)\b[\s\-\:\/\|\#]*/i, name: 'USV Ltd.' },
+  { pattern: /^(?:FDC(?:\s+LTD)?)\b[\s\-\:\/\|\#]*/i, name: 'FDC Ltd.' },
+  { pattern: /^(?:ALEMBIC(?:\s+PHARMA)?)\b[\s\-\:\/\|\#]*/i, name: 'Alembic Pharmaceuticals' },
+  { pattern: /^(?:PFIZER(?:\s+LTD)?)\b[\s\-\:\/\|\#]*/i, name: 'Pfizer' },
+  { pattern: /^(?:SANOFI(?:\s+INDIA)?)\b[\s\-\:\/\|\#]*/i, name: 'Sanofi India' },
+  { pattern: /^(?:HETERO(?:\s+HEALTHCARE)?)\b[\s\-\:\/\|\#]*/i, name: 'Hetero Healthcare' },
+  { pattern: /^(?:EMCURE(?:\s+PHARMA)?)\b[\s\-\:\/\|\#]*/i, name: 'Emcure Pharmaceuticals' },
+  { pattern: /^(?:MACLEODS(?:\s+PHARMA)?)\b[\s\-\:\/\|\#]*/i, name: 'Macleods Pharmaceuticals' },
+  { pattern: /^(?:LEEFORD(?:\s+HEALTHCARE)?)\b[\s\-\:\/\|\#]*/i, name: 'Leeford Healthcare' },
+  { pattern: /^(?:BLUE\s*CROSS)\b[\s\-\:\/\|\#]*/i, name: 'Blue Cross Laboratories' },
+  { pattern: /^(?:CORONA(?:\s+REMEDIES)?)\b[\s\-\:\/\|\#]*/i, name: 'Corona Remedies' },
+  { pattern: /^(?:APEX(?:\s+LABS)?)\b[\s\-\:\/\|\#]*/i, name: 'Apex Laboratories' },
+  { pattern: /^(?:SERDIA(?:\s+PHARMA)?)\b[\s\-\:\/\|\#]*/i, name: 'Serdia Pharmaceuticals' },
+  { pattern: /^(?:AJANTA(?:\s+PHARMA)?)\b[\s\-\:\/\|\#]*/i, name: 'Ajanta Pharma' },
+  { pattern: /^(?:WALLACE(?:\s+PHARMA)?)\b[\s\-\:\/\|\#]*/i, name: 'Wallace Pharmaceuticals' },
+  { pattern: /^(?:FRANCO(?:\s+INDIAN)?)\b[\s\-\:\/\|\#]*/i, name: 'Franco-Indian Pharmaceuticals' },
+  { pattern: /^(?:FOURRTS(?:\s+INDIA)?)\b[\s\-\:\/\|\#]*/i, name: 'Fourrts India' },
+  { pattern: /^(?:MEDLEY(?:\s+PHARMA)?)\b[\s\-\:\/\|\#]*/i, name: 'Medley Pharmaceuticals' },
+  { pattern: /^(?:TROIKAA(?:\s+PHARMA)?)\b[\s\-\:\/\|\#]*/i, name: 'Troikaa Pharmaceuticals' },
+  { pattern: /^(?:CENTAUR(?:\s+PHARMA)?)\b[\s\-\:\/\|\#]*/i, name: 'Centaur Pharmaceuticals' },
+  { pattern: /^(?:J\.?B\.?\s*CHEMICALS|JB\-R|JBC|JB)\b[\s\-\:\/\|\#]*/i, name: 'J.B. Chemicals & Pharmaceuticals' },
+  { pattern: /^(?:SYSTOPIC|SYST)\b[\s\-\:\/\|\#]*/i, name: 'Systopic Laboratories' },
+
+  // Common distributor 3-5 letter MFR shortcodes at beginning of product name
+  { pattern: /^SANO[\-\s\:\/\|\#]+/i, name: 'Sanofi India' },
+  { pattern: /^MANK[\-\s\:\/\|\#]+/i, name: 'Mankind Pharma' },
+  { pattern: /^CIPL[\-\s\:\/\|\#]+/i, name: 'Cipla Ltd.' },
+  { pattern: /^SUNP?[\-\s\:\/\|\#]+/i, name: 'Sun Pharma' },
+  { pattern: /^ALKM?[\-\s\:\/\|\#]+/i, name: 'Alkem Laboratories' },
+  { pattern: /^TORR?[\-\s\:\/\|\#]+/i, name: 'Torrent Pharmaceuticals' },
+  { pattern: /^LUPN?[\-\s\:\/\|\#]+/i, name: 'Lupin Ltd.' },
+  { pattern: /^GLAX?[\-\s\:\/\|\#]+/i, name: 'GlaxoSmithKline' },
+  { pattern: /^INTS?[\-\s\:\/\|\#]+/i, name: 'Intas Pharmaceuticals' },
+  { pattern: /^ARIS?[\-\s\:\/\|\#]+/i, name: 'Aristo Pharmaceuticals' },
+  { pattern: /^GLEN?[\-\s\:\/\|\#]+/i, name: 'Glenmark Pharmaceuticals' },
+  { pattern: /^MICR?[\-\s\:\/\|\#]+/i, name: 'Micro Labs Ltd.' },
+  { pattern: /^ALMB?[\-\s\:\/\|\#]+/i, name: 'Alembic Pharmaceuticals' },
+  { pattern: /^PFIZ?[\-\s\:\/\|\#]+/i, name: 'Pfizer' },
+  { pattern: /^EMCU?[\-\s\:\/\|\#]+/i, name: 'Emcure Pharmaceuticals' },
+  { pattern: /^MACL?[\-\s\:\/\|\#]+/i, name: 'Macleods Pharmaceuticals' },
+  { pattern: /^LEEF?[\-\s\:\/\|\#]+/i, name: 'Leeford Healthcare' },
+  { pattern: /^AJAN?[\-\s\:\/\|\#]+/i, name: 'Ajanta Pharma' },
+  { pattern: /^WALL?[\-\s\:\/\|\#]+/i, name: 'Wallace Pharmaceuticals' },
+  { pattern: /^MEDL?[\-\s\:\/\|\#]+/i, name: 'Medley Pharmaceuticals' },
+  { pattern: /^TROI?[\-\s\:\/\|\#]+/i, name: 'Troikaa Pharmaceuticals' },
+  { pattern: /^CENT?[\-\s\:\/\|\#]+/i, name: 'Centaur Pharmaceuticals' },
+  { pattern: /^WOCK?[\-\s\:\/\|\#]+/i, name: 'Wockhardt' },
+  { pattern: /^ABBT?[\-\s\:\/\|\#]+/i, name: 'Abbott Healthcare' },
+  { pattern: /^HET?[\-\s\:\/\|\#]+/i, name: 'Hetero Healthcare' },
+];
+
+// Extract manufacturer into separate property and clean product name to only pure medicine name
+const extractManufacturerAndCleanName = (rawName) => {
+  if (!rawName) return { cleanName: '' };
+  let text = String(rawName).trim();
+
+  // 1. Strip leading list numbering e.g. "1. ", "01 - ", "#3 ", "1) "
+  text = text.replace(/^#?\d+[\.\-\)\s]+\s*/, '');
+
+  // 2. Strip leading 6-8 digit HSN/SAC numbers e.g. "30049069 ", "HSN: 300490 "
+  text = text.replace(/^(?:HSN|SAC)?[:\s#-]*\b\d{6,8}\b[\s\-\:\/\|\#]*/i, '');
+  text = text.replace(/\b(?:HSN|SAC)[:\s#-]*\d+\b/gi, '');
+
+  let detectedMfr;
+
+  // 3. Check for explicit MFR / MFG / MKT prefixes: e.g. "MFR: IPCA Zerodol-SP", "MFG: CIPLA Dolo"
+  const mfrPrefixMatch = text.match(/^(?:MFR|MFG|MKT|MKT\s+BY|MFD\s+BY|CO|COMPANY|DIV|DIVISION)[:\s#-]+([A-Za-z0-9&.\s]{2,25}?)(?:[\s\-\:\/\|\#]+|\b(?=[A-Z][a-z]))/i);
+  if (mfrPrefixMatch) {
+    detectedMfr = mfrPrefixMatch[1].trim();
+    text = text.slice(mfrPrefixMatch[0].length).trim();
+  }
+
+  // 4. Check for bracketed MFR e.g. "[IPCA] Zerodol-SP", "(CIPLA) Dolo"
+  if (!detectedMfr) {
+    const bracketMatch = text.match(/^[\[\(]([A-Za-z0-9&.\s]{2,15})[\]\)][\s\-\:\/\|\#]*/);
+    if (bracketMatch) {
+      detectedMfr = bracketMatch[1].trim();
+      text = text.slice(bracketMatch[0].length).trim();
+    }
+  }
+
+  // 5. Match against known pharmaceutical manufacturers and distributor shortcodes
+  if (!detectedMfr) {
+    for (const mfr of PHARMA_MANUFACTURERS) {
+      const match = text.match(mfr.pattern);
+      if (match) {
+        detectedMfr = mfr.name;
+        text = text.slice(match[0].length).trim();
+        break;
+      }
+    }
+  }
+
+  // 6. Strip tax or rate tags e.g. "@12%", "GST 12%", "12% GST", "CGST", "SGST", "IGST"
+  text = text.replace(/\b(?:GST|CGST|SGST|IGST)\s*[:#-]?\s*\d*%?\b/gi, '');
+  text = text.replace(/@\s*\d+%/g, '');
+
+  // 7. Strip embedded batch, exp, rate tags
+  text = text.replace(/\b(?:BATCH|LOT|B\.?\s*NO|EXP|EXPIRY|MFG)[:\s#-]*[A-Z0-9/.-]+\b/gi, '');
+  text = text.replace(/\b(?:MRP|RATE|PTR|PTS|COST)[:\s#-]*[\d.]+\b/gi, '');
+
+  // 8. Strip pack indicators e.g. "10x10", "1x10's", "10TAB", "15TAB", "20TAB", "10's", "10s", "15T", "10T"
+  text = text.replace(/\b\d+\s*['xX*]\s*\d+\s*(?:TAB|CAP|S|ML|VIAL|STRIP)?\b/gi, '');
+  text = text.replace(/[\s,;]+(?:10|15|20|30|50|100)['’]?[sS]$/g, '');
+  text = text.replace(/[\s,;]+(?:10|15|20|30|50|100)\s*(?:TAB|CAP|TABLETS?|CAPSULES?|STRIP|PACK|T)\s*$/i, '');
+  text = text.replace(/\b\d+\s*[tT]\b/g, '');
+
+  // 9. Remove punctuation at start or end and collapse whitespace
+  text = text.replace(/^[,;:\\/|#\-_.\s]+/, '').replace(/[,;:\\/|#\-_.\s]+$/, '');
+  text = text.replace(/\s{2,}/g, ' ').trim();
+
+  return {
+    cleanName: text,
+    manufacturer: detectedMfr,
+  };
+};
+
+// Clean raw medicine name from distributor bills to pure product name
 const cleanMedicineName = (rawName) => {
-  if (!rawName) return '';
-  let name = String(rawName).trim();
-  // Strip leading numbers e.g. "1.", "02 -", "#3"
-  name = name.replace(/^#?\d+[\.\-\s\)]+/, '').trim();
-  // Strip HSN/SAC codes
-  name = name.replace(/\bHSN[:\s-]*\d+\b/gi, '').trim();
-  // Strip tax or rate tags like "@12%", "GST 12%", "12% GST"
-  name = name.replace(/\b(GST\s*\d+%?|\d+%\s*GST|@\s*\d+%)\b/gi, '').trim();
-  // Strip embedded batch or expiry markers
-  name = name.replace(/\b(B\.?\s*No[:\.]?|BATCH[:\.]?|EXP[:\.]?|MFG[:\.]?)\s*[\w\/-]+/gi, '').trim();
-  // Strip pack indicators like "10x10", "1x10's", "10TAB", "10'S", "10 CAP"
-  name = name.replace(/\b\d+\s*['xX*]\s*\d+('?s)?\b/gi, '').trim();
-  // Remove repeated whitespaces
-  name = name.replace(/\s{2,}/g, ' ').trim();
-  return name;
+  return extractManufacturerAndCleanName(rawName).cleanName;
 };
 
 // @desc    Get all purchase orders
@@ -227,8 +346,10 @@ const importDistributorBill = async (req, res, next) => {
     for (const rawItem of validItems) {
       const item = rawItem || {};
       const rawMedName = String(item.medicineName || item.name || '').trim();
-      const medicineName = cleanMedicineName(rawMedName) || rawMedName;
-      const genericName = cleanMedicineName(String(item.genericName || item.name || '').trim()) || medicineName;
+      const extracted = extractManufacturerAndCleanName(rawMedName);
+      const medicineName = extracted.cleanName || cleanMedicineName(rawMedName) || rawMedName;
+      const genericName = cleanMedicineName(String(item.genericName || '').trim()) || medicineName;
+      const manufacturer = item.manufacturer || extracted.manufacturer || 'Authorized Supplier';
       const qty = Math.max(1, Number(item.quantity || item.qty || 1));
       const purchasePrice = Number(item.purchasePrice || item.unitPrice || item.price || 10);
       const sellingPrice = Number(item.sellingPrice || item.mrp || Number((purchasePrice * 1.25).toFixed(2)));
@@ -252,6 +373,7 @@ const importDistributorBill = async (req, res, next) => {
         pharmacy: req.pharmacyId,
         $or: [
           { name: { $regex: `^${medicineName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' } },
+          { name: { $regex: `^${rawMedName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' } },
           { genericName: { $regex: `^${genericName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' } },
         ],
       });
@@ -263,7 +385,7 @@ const importDistributorBill = async (req, res, next) => {
           genericName: genericName || medicineName,
           brand: item.brand || '',
           category: item.category || 'General',
-          manufacturer: item.manufacturer || 'Authorized Supplier',
+          manufacturer,
           dosageForm: item.dosageForm || 'Tablet',
           strength: item.strength || '500mg',
           unit: item.unit || 'Strip',
@@ -279,6 +401,11 @@ const importDistributorBill = async (req, res, next) => {
         });
         createdCount += 1;
       } else {
+        // Ensure medicine name is always the clean product name and manufacturer is saved
+        medicine.name = medicineName;
+        if (extracted.manufacturer) {
+          medicine.manufacturer = extracted.manufacturer;
+        }
         medicine.purchasePrice = purchasePrice;
         if (sellingPrice > 0) medicine.sellingPrice = sellingPrice;
         await medicine.save();

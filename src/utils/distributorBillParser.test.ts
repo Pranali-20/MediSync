@@ -120,6 +120,49 @@ describe('parseDistributorBillLines', () => {
     expect(items[2].batchNumber).toBe('TL8821');
     expect(items[2].expiryDate).toBe('2028-05-31');
   });
+
+  it('strips manufacturer prefixes and codes (like IPCA, DRL, JB-R, SANO) showing strictly clean product names', () => {
+    const lines = [
+      { segments: [{ text: 'Item Description  Batch  Exp  Qty  Rate  MRP', x: 0 }] },
+      { segments: [{ text: 'IPCA Zerodol-SP Tablets  ZD2401  NOV/26  10  85.50  115.00', x: 0 }] },
+      { segments: [{ text: '30049069 IPCA Zerodol-SP Tablets 10s  ZD2402  NOV/26  20  85.50  115.00', x: 0 }] },
+      { segments: [{ text: '30049034 DRL- OMEZ D SR CAP  OM5120  12/27  15  110.00  155.00', x: 0 }] },
+      { segments: [{ text: '30049022 JB-R METROGYL 400 TAB 20TAB  MT991  OCT-26  25  28.75  38.50', x: 0 }] },
+      { segments: [{ text: '30041090 SANO SOFRAMYCIN SKIN CREA 30GM  SF881  AUG/28  10  53.50  72.00', x: 0 }] },
+      { segments: [{ text: '30049039 MANK LECOPE-M TAB 15TAB  LM301  MAY/27  30  62.00  88.00', x: 0 }] },
+    ];
+
+    const items = parseDistributorBillLines(lines);
+    expect(items.length).toBe(6);
+
+    // IPCA Zerodol-SP Tablets -> Zerodol-SP Tablets
+    expect(items[0].medicineName).toBe('Zerodol-SP Tablets');
+    expect(items[0].manufacturer).toBe('IPCA Laboratories');
+    expect(items[0].quantity).toBe(10);
+    expect(items[0].batchNumber).toBe('ZD2401');
+
+    // 30049069 IPCA Zerodol-SP Tablets 10s -> Zerodol-SP Tablets
+    expect(items[1].medicineName).toBe('Zerodol-SP Tablets');
+    expect(items[1].manufacturer).toBe('IPCA Laboratories');
+    expect(items[1].quantity).toBe(20);
+
+    // 30049034 DRL- OMEZ D SR CAP -> OMEZ D SR CAP
+    expect(items[2].medicineName).toBe('OMEZ D SR CAP');
+    expect(items[2].manufacturer).toBe("Dr. Reddy's Laboratories");
+
+    // 30049022 JB-R METROGYL 400 TAB 20TAB -> METROGYL 400 TAB
+    expect(items[3].medicineName).toBe('METROGYL 400 TAB');
+    expect(items[3].manufacturer).toBe('J.B. Chemicals & Pharmaceuticals');
+
+    // 30041090 SANO SOFRAMYCIN SKIN CREA 30GM -> SOFRAMYCIN SKIN CREA 30GM
+    expect(items[4].medicineName).toBe('SOFRAMYCIN SKIN CREA 30GM');
+    expect(items[4].manufacturer).toBe('Sanofi India');
+
+    // 30049039 MANK LECOPE-M TAB 15TAB -> LECOPE-M TAB
+    expect(items[5].medicineName).toBe('LECOPE-M TAB');
+    expect(items[5].manufacturer).toBe('Mankind Pharma');
+  });
 });
+
 
 

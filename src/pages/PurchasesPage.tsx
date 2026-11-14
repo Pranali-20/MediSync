@@ -367,6 +367,7 @@ export const PurchasesPage: React.FC = () => {
           item.expiryDate && item.expiryDate.trim()
             ? item.expiryDate.trim()
             : `${currentYear + 2}-12-31`,
+        manufacturer: item.manufacturer,
       }));
 
       setBillImportItems(readyItems);
@@ -385,6 +386,7 @@ export const PurchasesPage: React.FC = () => {
           sellingPrice: it.sellingPrice,
           batchNumber: it.batchNumber,
           expiryDate: it.expiryDate,
+          manufacturer: it.manufacturer,
         })),
       };
 
@@ -432,6 +434,7 @@ export const PurchasesPage: React.FC = () => {
           sellingPrice: Number(item.sellingPrice || 0) || Number(((item.purchasePrice || 10) * 1.25).toFixed(2)),
           batchNumber: item.batchNumber.trim() || `LOT-${currentYear}-${Math.floor(1000 + Math.random() * 9000)}`,
           expiryDate: item.expiryDate || `${currentYear + 2}-12-31`,
+          manufacturer: item.manufacturer,
         })),
       };
 
