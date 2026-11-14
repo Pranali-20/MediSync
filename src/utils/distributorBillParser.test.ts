@@ -64,4 +64,62 @@ describe('parseDistributorBillLines', () => {
       expiryDate: '',
     }]);
   });
+
+  it('filters out distributor headers, addresses, GSTIN, and footer totals, accepting only genuine medicines', () => {
+    const lines = [
+      { segments: [{ text: 'SHREE PHARMA DISTRIBUTORS - TAX INVOICE', x: 0 }] },
+      { segments: [{ text: 'Plot 45, Industrial Area, GSTIN: 27AAAAA0000A1Z5, DL No: 20B/1234', x: 0 }] },
+      { segments: [{ text: 'Billed to: MediSync Pharmacy, Date: 12/11/2026, Inv No: INV-9901', x: 0 }] },
+      { segments: [{ text: 'Item Description  HSN  Batch  Exp  Qty  Rate  MRP  Amount', x: 0 }] },
+      { segments: [{ text: '1. Augmentin 625 Duo  300490  AG3401  11/26  10  145.00  185.00  1450.00', x: 0 }] },
+      { segments: [{ text: '2. Dolo 650mg Tab  300490  DL9021  08/27  30  24.50  32.00  735.00', x: 0 }] },
+      { segments: [{ text: 'Sub Total: 2185.00  CGST: 131.10  SGST: 131.10  Grand Total: 2447.20', x: 0 }] },
+      { segments: [{ text: 'Bank: HDFC Bank, A/C: 1234567890, IFSC: HDFC0001234', x: 0 }] },
+      { segments: [{ text: 'For Shree Pharma Distributors - Authorised Signatory', x: 0 }] },
+    ];
+
+    const parsed = parseDistributorBillLines(lines);
+    expect(parsed.length).toBe(2);
+    expect(parsed[0].medicineName).toBe('Augmentin 625 Duo');
+    expect(parsed[0].quantity).toBe(10);
+    expect(parsed[0].batchNumber).toBe('AG3401');
+    expect(parsed[0].expiryDate).toBe('2026-11-30');
+
+    expect(parsed[1].medicineName).toBe('Dolo 650mg Tab');
+    expect(parsed[1].quantity).toBe(30);
+    expect(parsed[1].batchNumber).toBe('DL9021');
+    expect(parsed[1].expiryDate).toBe('2027-08-31');
+  });
+
+  it('accurately parses distributor invoices with pack sizes and month abbreviation expiries', () => {
+    const lines = [
+      { segments: [{ text: 'SUN PHARMA WHOLESALE DISTRIBUTORS', x: 0 }] },
+      { segments: [{ text: 'GSTIN: 27AABCS1429B1Z8  DL NO: 20B/4590', x: 0 }] },
+      { segments: [{ text: 'Item Desc  Pack  Batch  Exp  Qty  PTR  MRP  Amount', x: 0 }] },
+      { segments: [{ text: 'PAN D CAP  10S  B23091  12/27  20  98.40  145.00  1968.00', x: 0 }] },
+      { segments: [{ text: 'AZITHRAL 500  5T  AZ552  OCT-26  15  89.50  120.00  1342.50', x: 0 }] },
+      { segments: [{ text: 'TELMA 40 TAB  15T  TL8821  MAY/28  50  122.00  165.00  6100.00', x: 0 }] },
+      { segments: [{ text: 'Total Value: 9410.50  Round Off: -0.50  Net Payable: 9410.00', x: 0 }] },
+    ];
+
+    const items = parseDistributorBillLines(lines);
+    expect(items.length).toBe(3);
+
+    expect(items[0].medicineName).toBe('PAN D CAP');
+    expect(items[0].quantity).toBe(20);
+    expect(items[0].batchNumber).toBe('B23091');
+    expect(items[0].expiryDate).toBe('2027-12-31');
+
+    expect(items[1].medicineName).toBe('AZITHRAL 500');
+    expect(items[1].quantity).toBe(15);
+    expect(items[1].batchNumber).toBe('AZ552');
+    expect(items[1].expiryDate).toBe('2026-10-31');
+
+    expect(items[2].medicineName).toBe('TELMA 40 TAB');
+    expect(items[2].quantity).toBe(50);
+    expect(items[2].batchNumber).toBe('TL8821');
+    expect(items[2].expiryDate).toBe('2028-05-31');
+  });
 });
+
+
